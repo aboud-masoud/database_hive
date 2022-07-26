@@ -1,6 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:todo_app_using_hive/models/todo.dart';
+
+enum Priority { week, normal, strong }
+
+Priority? priority;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -10,16 +16,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  List<Map<String, dynamic>> _items = [];
   final _myBox = Hive.box('todo');
 
   List<bool> checkboxList = [];
 
   // TextFields' controllers
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _quantityController = TextEditingController();
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _descController = TextEditingController();
+  final TextEditingController _timingController = TextEditingController();
 
   bool checkboxStatus = false;
+
+  StreamController<Priority> refreshRadioButtons = StreamController<Priority>.broadcast();
 
   @override
   void initState() {
@@ -29,14 +37,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Get all items from the database
   void _refreshItems() {
-    final data = _myBox.keys.map((key) {
-      final value = _myBox.get(key);
-      return {"key": key, "name": value["name"], "quantity": value['quantity']};
-    }).toList();
-
     setState(() {
-      _items = data.reversed.toList();
-      checkboxList = List.generate(_items.length, (index) => false);
+      checkboxList = List.generate(_myBox.length, (index) => false);
     });
   }
 
@@ -51,7 +53,7 @@ class _HomeScreenState extends State<HomeScreen> {
               bool itemToDelete = false;
               for (int i = 0; i < checkboxList.length; i++) {
                 if (checkboxList[i]) {
-                  _deleteItem(_items[i]['key']);
+                  _deleteItem(i);
                   itemToDelete = true;
                 }
               }
@@ -66,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: _items.isEmpty
+      body: _myBox.isEmpty
           ? const Center(
               child: Text(
                 'No Data',
@@ -75,48 +77,62 @@ class _HomeScreenState extends State<HomeScreen> {
             )
           : ListView.builder(
               // the list of items
-              itemCount: _items.length,
+              itemCount: _myBox.length,
               itemBuilder: (_, index) {
-                final currentItem = _items[index];
+                Todo currentItem = _myBox.getAt(index);
                 return Card(
                   color: Colors.orange.shade100,
                   margin: const EdgeInsets.all(10),
                   elevation: 3,
-                  child: ListTile(
-                      title: Text(currentItem['name']),
-                      subtitle: Text(currentItem['quantity'].toString()),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Container(
+                      child: Row(
                         children: [
-                          // Edit button
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () {
-                              _nameController.text = currentItem['name'];
-                              _quantityController.text =
-                                  currentItem['quantity'].toString();
-
-                              _showForm(
-                                  ctx: context, itemKey: currentItem['key']);
-                            },
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(currentItem.title),
+                                Text(currentItem.desc),
+                                Text(currentItem.timing),
+                                Text(currentItem.priority),
+                              ],
+                            ),
                           ),
-                          // Delete button
-                          IconButton(
-                            icon: const Icon(Icons.delete),
-                            onPressed: () => _deleteItem(currentItem['key']),
-                          ),
+                          Expanded(
+                              child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Edit button
+                              IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: () {
+                                  _showForm(ctx: context, index: index);
+                                },
+                              ),
+                              // Delete button
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () => _deleteItem(index),
+                              ),
 
-                          checkboxStatus == true
-                              ? Checkbox(
-                                  value: checkboxList[index],
-                                  onChanged: (value) {
-                                    checkboxList[index] = value!;
-                                    setState(() {});
-                                  },
-                                )
-                              : Container()
+                              checkboxStatus == true
+                                  ? Checkbox(
+                                      value: checkboxList[index],
+                                      onChanged: (value) {
+                                        checkboxList[index] = value!;
+                                        setState(() {});
+                                      },
+                                    )
+                                  : Container()
+                            ],
+                          ))
                         ],
-                      )),
+                      ),
+                    ),
+                  ),
                 );
               }),
       // Add new item button
@@ -127,78 +143,123 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showForm({required BuildContext ctx, int? itemKey}) async {
+  void _showForm({required BuildContext ctx, int? index}) async {
     showModalBottomSheet(
         context: ctx,
         elevation: 5,
         isScrollControlled: true,
         builder: (_) => Container(
-              padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
-                  top: 15,
-                  left: 15,
-                  right: 15),
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, top: 15, left: 15, right: 15),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(hintText: 'Name'),
+                    controller: _titleController,
+                    decoration: const InputDecoration(hintText: 'Title'),
                   ),
                   const SizedBox(
                     height: 10,
                   ),
                   TextField(
-                    controller: _quantityController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: <TextInputFormatter>[
-                      FilteringTextInputFormatter.digitsOnly
-                    ],
-                    decoration: const InputDecoration(hintText: 'Quantity'),
+                    controller: _descController,
+                    decoration: const InputDecoration(hintText: 'Description'),
                   ),
                   const SizedBox(
-                    height: 20,
+                    height: 10,
+                  ),
+                  TextField(
+                    controller: _timingController,
+                    decoration: const InputDecoration(hintText: 'Time'),
+                  ),
+                  StreamBuilder<Priority>(
+                      stream: refreshRadioButtons.stream,
+                      initialData: Priority.normal,
+                      builder: (context, snapshot) {
+                        return Row(
+                          children: [
+                            Radio<Priority>(
+                              groupValue: priority,
+                              value: Priority.week,
+                              onChanged: (Priority? value) {
+                                print("value");
+                                print(value);
+
+                                priority = value!;
+                                refreshRadioButtons.sink.add(priority!);
+                              },
+                            ),
+                            Text("Week"),
+                            Radio<Priority>(
+                              groupValue: priority,
+                              value: Priority.normal,
+                              onChanged: (Priority? value) {
+                                priority = value!;
+                                refreshRadioButtons.sink.add(priority!);
+                              },
+                            ),
+                            Text("Normal"),
+                            Radio<Priority>(
+                              groupValue: priority,
+                              value: Priority.strong,
+                              onChanged: (Priority? value) {
+                                priority = value!;
+                                refreshRadioButtons.sink.add(priority!);
+                              },
+                            ),
+                            Text("Strong"),
+                          ],
+                        );
+                      }),
+                  const SizedBox(
+                    height: 50,
                   ),
                   ElevatedButton(
                     onPressed: () async {
                       // Save new item
-                      if (itemKey == null) {
-                        if (_nameController.text.isNotEmpty) {
-                          if (_quantityController.text.isNotEmpty) {
-                            _createItem({
-                              "name": _nameController.text,
-                              "quantity": _quantityController.text
-                            });
-                          } else {
-                            Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content:
-                                        Text('you have to fill the quantity')));
-                            return;
-                          }
+                      if (_titleController.text.isNotEmpty &&
+                          _descController.text.isNotEmpty &&
+                          _timingController.text.isNotEmpty &&
+                          priority != null) {
+                        if (index == null) {
+                          _createItem(Todo(
+                              title: _titleController.text,
+                              desc: _descController.text,
+                              timing: _timingController.text,
+                              priority: priority == Priority.week
+                                  ? "week"
+                                  : priority == Priority.normal
+                                      ? "normal"
+                                      : "strong"));
                         } else {
-                          Navigator.of(context).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text('you have to fill the name')));
-                          return;
+                          _updateItem(
+                              index,
+                              Todo(
+                                  title: _titleController.text,
+                                  desc: _descController.text,
+                                  timing: _timingController.text,
+                                  priority: priority == Priority.week
+                                      ? "week"
+                                      : priority == Priority.normal
+                                          ? "normal"
+                                          : "strong"));
                         }
                       } else {
-                        _updateItem(itemKey, {
-                          'name': _nameController.text.trim(),
-                          'quantity': _quantityController.text.trim()
-                        });
+                        Navigator.of(context).pop();
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(const SnackBar(content: Text('you have to fill all the fields')));
+                        return;
                       }
 
                       // Clear the text fields
-                      _nameController.text = '';
-                      _quantityController.text = '';
+                      _titleController.text = "";
+                      _descController.text = "";
+                      _timingController.text = "";
+                      priority = null;
 
                       Navigator.of(context).pop(); // Close the bottom sheet
                     },
-                    child: Text(itemKey != null ? 'Update Item' : 'Create New'),
+                    child: Text(index != null ? 'Update Item' : 'Create New'),
                   ),
                   const SizedBox(
                     height: 15,
@@ -207,12 +268,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             )).then((value) {
       // Clear the text fields
-      _nameController.text = '';
-      _quantityController.text = '';
+      _titleController.text = "";
+      _descController.text = "";
+      _timingController.text = "";
+      priority = null;
     });
   }
 
-  Future<void> _deleteItem(int itemKey) async {
+  Future<void> _deleteItem(int index) async {
     Widget cancelButton = TextButton(
       child: const Text("Cancel"),
       onPressed: () {
@@ -222,19 +285,18 @@ class _HomeScreenState extends State<HomeScreen> {
     Widget confirmtionButton = TextButton(
       child: const Text("Confirm"),
       onPressed: () async {
-        await _myBox.delete(itemKey);
+        await _myBox.deleteAt(index);
         Navigator.of(context).pop();
 
         _refreshItems(); // update the UI
         // Display a snackbar
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('An item has been deleted')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('An item has been deleted')));
       },
     );
 
     AlertDialog alert = AlertDialog(
       title: const Text("Are You Sure ?"),
-      content: Text("Would you like to delete the item with id $itemKey"),
+      content: Text("Would you like to delete the item with id $index"),
       actions: [
         cancelButton,
         confirmtionButton,
@@ -249,13 +311,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _createItem(Map<String, dynamic> newItem) async {
+  Future<void> _createItem(Todo newItem) async {
     await _myBox.add(newItem);
     _refreshItems(); // update the UI
   }
 
-  Future<void> _updateItem(int itemKey, Map<String, dynamic> item) async {
-    await _myBox.put(itemKey, item);
+  Future<void> _updateItem(int index, Todo item) async {
+    await _myBox.putAt(index, item);
     _refreshItems(); // Update the UI
   }
 }
